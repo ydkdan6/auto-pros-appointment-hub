@@ -33,11 +33,6 @@ export const AppointmentBooking: React.FC<AppointmentBookingProps> = ({ onSucces
   ];
 
   const technicians = [
-    'Any Available',
-    'Mike Johnson',
-    'Sarah Wilson',
-    'David Chen',
-    'Emily Rodriguez'
   ];
 
   const handleInputChange = (field: string, value: string) => {

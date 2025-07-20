@@ -3,7 +3,8 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { useAuth } from '@/contexts/AuthContext';
-import { Calendar, Car, FileText, Clock, CheckCircle, XCircle, AlertCircle } from 'lucide-react';
+import { Calendar, Car, FileText, Clock, CheckCircle, XCircle, AlertCircle, Loader2 } from 'lucide-react';
+import { supabase } from '@/integrations/supabase/client';
 
 interface Appointment {
   id: string;
@@ -20,19 +21,97 @@ interface Appointment {
   assignedTechnician?: string;
   completedAt?: string;
   rejectionReason?: string;
+  adminNotes?: string;
+  estimatedDuration?: number;
+}
+
+interface DatabaseAppointment {
+  id: string;
+  customer_id: string;
+  vehicle_make: string;
+  vehicle_model: string;
+  vehicle_year: number;
+  fault_description: string;
+  reason_description: string;
+  appointment_date: string;
+  appointment_time: string;
+  status: 'pending' | 'approved' | 'completed' | 'rejected';
+  technician_id: string | null;
+  admin_notes: string | null;
+  rejection_reason: string | null;
+  estimated_duration_hours: number | null;
+  created_at: string;
+  updated_at: string;
+  // Joined fields from profiles table
+  customer_profile?: { full_name: string };
+  technician_profile?: { full_name: string };
 }
 
 export const AppointmentHistory: React.FC = () => {
   const { user } = useAuth();
   const [appointments, setAppointments] = useState<Appointment[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  // Transform database appointment to component format
+  const transformAppointment = (dbAppointment: DatabaseAppointment): Appointment => {
+    return {
+      id: dbAppointment.id,
+      customerId: dbAppointment.customer_id,
+      customerName: dbAppointment.customer_profile?.full_name || 'Unknown Customer',
+      date: dbAppointment.appointment_date,
+      time: dbAppointment.appointment_time,
+      vehicle: `${dbAppointment.vehicle_year} ${dbAppointment.vehicle_make} ${dbAppointment.vehicle_model}`,
+      fault: dbAppointment.fault_description,
+      reason: dbAppointment.reason_description,
+      preferredTechnician: '', // This field doesn't exist in the new schema
+      status: dbAppointment.status,
+      createdAt: dbAppointment.created_at,
+      assignedTechnician: dbAppointment.technician_profile?.full_name || undefined,
+      completedAt: dbAppointment.status === 'completed' ? dbAppointment.updated_at : undefined,
+      rejectionReason: dbAppointment.rejection_reason || undefined,
+      adminNotes: dbAppointment.admin_notes || undefined,
+      estimatedDuration: dbAppointment.estimated_duration_hours || undefined,
+    };
+  };
+
+  const fetchAppointments = async () => {
+    if (!user?.id) return;
+
+    try {
+      setLoading(true);
+      setError(null);
+
+      const { data, error: fetchError } = await supabase
+        .from('appointments')
+        .select(`
+          *,
+          customer_profile:profiles!appointments_customer_id_fkey(
+            full_name
+          ),
+          technician_profile:profiles!appointments_technician_id_fkey(
+            full_name
+          )
+        `)
+        .eq('customer_id', user.id)
+        .order('created_at', { ascending: false });
+
+      if (fetchError) {
+        throw new Error(fetchError.message);
+      }
+
+      const transformedAppointments = (data || []).map(transformAppointment);
+      setAppointments(transformedAppointments);
+    } catch (err) {
+      console.error('Error fetching appointments:', err);
+      setError(err instanceof Error ? err.message : 'Failed to load appointments');
+    } finally {
+      setLoading(false);
+    }
+  };
 
   useEffect(() => {
-    // Load appointments from localStorage (in real app, this would be an API call)
-    const storedAppointments = JSON.parse(localStorage.getItem('appointments') || '[]');
-    const userAppointments = storedAppointments.filter((apt: Appointment) => apt.customerId === user?.id);
-    setAppointments(userAppointments.sort((a: Appointment, b: Appointment) => 
-      new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
-    ));
+    fetchAppointments();
   }, [user?.id]);
 
   const getStatusIcon = (status: string) => {
@@ -87,6 +166,44 @@ export const AppointmentHistory: React.FC = () => {
     });
   };
 
+  const formatTime = (timeString: string) => {
+    // Handle time format from database (HH:mm:ss)
+    const [hours, minutes] = timeString.split(':');
+    const date = new Date();
+    date.setHours(parseInt(hours), parseInt(minutes));
+    return date.toLocaleTimeString('en-US', {
+      hour: 'numeric',
+      minute: '2-digit',
+      hour12: true
+    });
+  };
+
+  if (loading) {
+    return (
+      <Card className="card-workshop">
+        <CardContent className="flex flex-col items-center justify-center py-12">
+          <Loader2 className="h-8 w-8 animate-spin text-primary mb-4" />
+          <p className="text-muted-foreground">Loading your appointments...</p>
+        </CardContent>
+      </Card>
+    );
+  }
+
+  if (error) {
+    return (
+      <Card className="card-workshop">
+        <CardContent className="flex flex-col items-center justify-center py-12">
+          <XCircle className="h-12 w-12 text-destructive mb-4" />
+          <h3 className="text-lg font-semibold mb-2">Error Loading Appointments</h3>
+          <p className="text-muted-foreground text-center mb-4">{error}</p>
+          <Button onClick={fetchAppointments} variant="outline">
+            Try Again
+          </Button>
+        </CardContent>
+      </Card>
+    );
+  }
+
   if (appointments.length === 0) {
     return (
       <Card className="card-workshop">
@@ -108,6 +225,14 @@ export const AppointmentHistory: React.FC = () => {
           <CardTitle className="flex items-center space-x-2">
             <Calendar className="h-5 w-5" />
             <span>My Appointments</span>
+            <Button 
+              variant="ghost" 
+              size="sm" 
+              onClick={fetchAppointments}
+              className="ml-auto"
+            >
+              Refresh
+            </Button>
           </CardTitle>
         </CardHeader>
         <CardContent>
@@ -123,7 +248,7 @@ export const AppointmentHistory: React.FC = () => {
                     <div>
                       <h4 className="font-semibold">{appointment.vehicle}</h4>
                       <p className="text-sm text-muted-foreground">
-                        {formatDate(appointment.date)} at {appointment.time}
+                        {formatDate(appointment.date)} at {formatTime(appointment.time)}
                       </p>
                     </div>
                   </div>
@@ -147,12 +272,28 @@ export const AppointmentHistory: React.FC = () => {
                     </div>
                   </div>
 
+                  {appointment.estimatedDuration && (
+                    <div className="flex items-center space-x-2">
+                      <Clock className="h-4 w-4 text-info" />
+                      <p className="text-sm">
+                        <span className="font-medium">Estimated Duration:</span> {appointment.estimatedDuration} hour{appointment.estimatedDuration !== 1 ? 's' : ''}
+                      </p>
+                    </div>
+                  )}
+
                   {appointment.assignedTechnician && (
                     <div className="flex items-center space-x-2">
                       <CheckCircle className="h-4 w-4 text-success" />
                       <p className="text-sm">
                         <span className="font-medium">Assigned Technician:</span> {appointment.assignedTechnician}
                       </p>
+                    </div>
+                  )}
+
+                  {appointment.adminNotes && (
+                    <div className="bg-info/10 border border-info/20 rounded-md p-3">
+                      <p className="text-sm font-medium text-info">Admin Notes:</p>
+                      <p className="text-sm text-info/80">{appointment.adminNotes}</p>
                     </div>
                   )}
 

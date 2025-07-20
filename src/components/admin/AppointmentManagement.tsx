@@ -8,6 +8,8 @@ import { Textarea } from '@/components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { toast } from '@/hooks/use-toast';
+import { useAuth } from '@/contexts/AuthContext';
+import { supabase } from '@/integrations/supabase/client';
 import { 
   Calendar, 
   Car, 
@@ -16,7 +18,9 @@ import {
   CheckCircle, 
   XCircle, 
   User,
-  Settings
+  Settings,
+  Loader2,
+  RefreshCw
 } from 'lucide-react';
 
 interface Appointment {
@@ -28,68 +32,205 @@ interface Appointment {
   vehicle: string;
   fault: string;
   reason: string;
-  preferredTechnician: string;
   status: 'pending' | 'approved' | 'completed' | 'rejected';
   createdAt: string;
   assignedTechnician?: string;
-  tasks?: string;
-  estimatedDuration?: string;
-  completedAt?: string;
+  technicianId?: string;
+  adminNotes?: string;
+  estimatedDuration?: number;
   rejectionReason?: string;
+  tasks?: Array<{
+    id: string;
+    description: string;
+    estimatedDuration: number;
+    status: string;
+  }>;
+}
+
+interface DatabaseAppointment {
+  id: string;
+  customer_id: string;
+  vehicle_make: string;
+  vehicle_model: string;
+  vehicle_year: number;
+  fault_description: string;
+  reason_description: string;
+  appointment_date: string;
+  appointment_time: string;
+  status: 'pending' | 'approved' | 'completed' | 'rejected';
+  technician_id: string | null;
+  admin_notes: string | null;
+  rejection_reason: string | null;
+  estimated_duration_hours: number | null;
+  created_at: string;
+  updated_at: string;
+  customer_profile?: { full_name: string };
+  technician_profile?: { full_name: string };
+  tasks?: Array<{
+    id: string;
+    task_description: string;
+    estimated_duration_hours: number;
+    status: string;
+  }>;
+}
+
+interface Technician {
+  user_id: string;
+  full_name: string;
 }
 
 export const AppointmentManagement: React.FC = () => {
+  const { user } = useAuth();
   const [appointments, setAppointments] = useState<Appointment[]>([]);
+  const [technicians, setTechnicians] = useState<Technician[]>([]);
   const [filter, setFilter] = useState<string>('all');
   const [selectedAppointment, setSelectedAppointment] = useState<Appointment | null>(null);
   const [assignDialogOpen, setAssignDialogOpen] = useState(false);
-
-  const technicians = [
-    'Mike Johnson',
-    'Sarah Wilson', 
-    'David Chen',
-    'Emily Rodriguez',
-    'Alex Thompson'
-  ];
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
   const [assignmentData, setAssignmentData] = useState({
     technician: '',
     tasks: '',
-    duration: ''
+    duration: '',
+    adminNotes: ''
   });
 
-  useEffect(() => {
-    // Load appointments from localStorage (in real app, this would be an API call)
-    const storedAppointments = JSON.parse(localStorage.getItem('appointments') || '[]');
-    setAppointments(storedAppointments.sort((a: Appointment, b: Appointment) => 
-      new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
-    ));
-  }, []);
-
-  const updateAppointmentStatus = (appointmentId: string, status: string, data?: any) => {
-    const updatedAppointments = appointments.map(apt => {
-      if (apt.id === appointmentId) {
-        return { ...apt, status, ...data };
-      }
-      return apt;
-    });
-    
-    setAppointments(updatedAppointments);
-    localStorage.setItem('appointments', JSON.stringify(updatedAppointments));
+  // Transform database appointment to component format
+  const transformAppointment = (dbAppointment: DatabaseAppointment): Appointment => {
+    return {
+      id: dbAppointment.id,
+      customerId: dbAppointment.customer_id,
+      customerName: dbAppointment.customer_profile?.full_name || 'Unknown Customer',
+      date: dbAppointment.appointment_date,
+      time: dbAppointment.appointment_time,
+      vehicle: `${dbAppointment.vehicle_year} ${dbAppointment.vehicle_make} ${dbAppointment.vehicle_model}`,
+      fault: dbAppointment.fault_description,
+      reason: dbAppointment.reason_description,
+      status: dbAppointment.status,
+      createdAt: dbAppointment.created_at,
+      assignedTechnician: dbAppointment.technician_profile?.full_name,
+      technicianId: dbAppointment.technician_id || undefined,
+      adminNotes: dbAppointment.admin_notes || undefined,
+      estimatedDuration: dbAppointment.estimated_duration_hours || undefined,
+      rejectionReason: dbAppointment.rejection_reason || undefined,
+      tasks: dbAppointment.tasks?.map(task => ({
+        id: task.id,
+        description: task.task_description,
+        estimatedDuration: task.estimated_duration_hours,
+        status: task.status
+      })) || []
+    };
   };
 
-  const handleApprove = (appointment: Appointment) => {
-    updateAppointmentStatus(appointment.id, 'approved');
+  const fetchAppointments = async () => {
+    try {
+      setLoading(true);
+      setError(null);
+
+      const { data, error: fetchError } = await supabase
+        .from('appointments')
+        .select(`
+          *,
+          customer_profile:profiles!appointments_customer_id_fkey(
+            full_name
+          ),
+          technician_profile:profiles!appointments_technician_id_fkey(
+            full_name
+          ),
+          tasks(
+            id,
+            task_description,
+            estimated_duration_hours,
+            status
+          )
+        `)
+        .order('created_at', { ascending: false });
+
+      if (fetchError) {
+        throw new Error(fetchError.message);
+      }
+
+      const transformedAppointments = (data || []).map(transformAppointment);
+      setAppointments(transformedAppointments);
+    } catch (err) {
+      console.error('Error fetching appointments:', err);
+      setError(err instanceof Error ? err.message : 'Failed to load appointments');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const fetchTechnicians = async () => {
+    try {
+      const { data, error: fetchError } = await supabase
+        .from('profiles')
+        .select('user_id, full_name')
+        .eq('role', 'technician')
+        .eq('is_approved', true);
+
+      if (fetchError) {
+        throw new Error(fetchError.message);
+      }
+
+      setTechnicians(data || []);
+    } catch (err) {
+      console.error('Error fetching technicians:', err);
+    }
+  };
+
+  useEffect(() => {
+    fetchAppointments();
+    fetchTechnicians();
+  }, []);
+
+  const updateAppointmentStatus = async (
+    appointmentId: string, 
+    status: 'pending' | 'approved' | 'completed' | 'rejected',
+    additionalData?: any
+  ) => {
+    try {
+      const updateData: any = { status };
+      
+      if (additionalData) {
+        if (additionalData.technicianId) updateData.technician_id = additionalData.technicianId;
+        if (additionalData.adminNotes) updateData.admin_notes = additionalData.adminNotes;
+        if (additionalData.rejectionReason) updateData.rejection_reason = additionalData.rejectionReason;
+        if (additionalData.estimatedDuration) updateData.estimated_duration_hours = additionalData.estimatedDuration;
+      }
+
+      const { error } = await supabase
+        .from('appointments')
+        .update(updateData)
+        .eq('id', appointmentId);
+
+      if (error) throw error;
+
+      // Refresh appointments list
+      await fetchAppointments();
+      
+    } catch (err) {
+      console.error('Error updating appointment:', err);
+      toast({
+        title: "Error",
+        description: "Failed to update appointment",
+        variant: "destructive"
+      });
+    }
+  };
+
+  const handleApprove = async (appointment: Appointment) => {
+    await updateAppointmentStatus(appointment.id, 'approved');
     toast({
       title: "Appointment Approved",
       description: `${appointment.customerName}'s appointment has been approved.`,
     });
   };
 
-  const handleReject = (appointment: Appointment) => {
+  const handleReject = async (appointment: Appointment) => {
     const reason = prompt('Enter rejection reason:');
     if (reason) {
-      updateAppointmentStatus(appointment.id, 'rejected', { rejectionReason: reason });
+      await updateAppointmentStatus(appointment.id, 'rejected', { rejectionReason: reason });
       toast({
         title: "Appointment Rejected",
         description: `${appointment.customerName}'s appointment has been rejected.`,
@@ -98,7 +239,7 @@ export const AppointmentManagement: React.FC = () => {
     }
   };
 
-  const handleAssignTechnician = () => {
+  const handleAssignTechnician = async () => {
     if (!selectedAppointment || !assignmentData.technician || !assignmentData.tasks || !assignmentData.duration) {
       toast({
         title: "Error",
@@ -108,30 +249,76 @@ export const AppointmentManagement: React.FC = () => {
       return;
     }
 
-    updateAppointmentStatus(selectedAppointment.id, 'approved', {
-      assignedTechnician: assignmentData.technician,
-      tasks: assignmentData.tasks,
-      estimatedDuration: assignmentData.duration
-    });
+    try {
+      const selectedTech = technicians.find(t => t.user_id === assignmentData.technician);
+      const estimatedHours = parseFloat(assignmentData.duration);
 
-    toast({
-      title: "Technician Assigned",
-      description: `${assignmentData.technician} has been assigned to this appointment.`,
-    });
+      // Update appointment with technician assignment
+      await updateAppointmentStatus(selectedAppointment.id, 'approved', {
+        technicianId: assignmentData.technician,
+        adminNotes: assignmentData.adminNotes,
+        estimatedDuration: estimatedHours
+      });
 
-    setAssignDialogOpen(false);
-    setAssignmentData({ technician: '', tasks: '', duration: '' });
-    setSelectedAppointment(null);
+      // Create task for the technician
+      const { error: taskError } = await supabase
+        .from('tasks')
+        .insert({
+          appointment_id: selectedAppointment.id,
+          technician_id: assignmentData.technician,
+          task_description: assignmentData.tasks,
+          estimated_duration_hours: estimatedHours,
+          status: 'assigned'
+        });
+
+      if (taskError) throw taskError;
+
+      toast({
+        title: "Technician Assigned",
+        description: `${selectedTech?.full_name} has been assigned to this appointment.`,
+      });
+
+      setAssignDialogOpen(false);
+      setAssignmentData({ technician: '', tasks: '', duration: '', adminNotes: '' });
+      setSelectedAppointment(null);
+
+    } catch (err) {
+      console.error('Error assigning technician:', err);
+      toast({
+        title: "Error",
+        description: "Failed to assign technician",
+        variant: "destructive"
+      });
+    }
   };
 
-  const handleComplete = (appointment: Appointment) => {
-    updateAppointmentStatus(appointment.id, 'completed', { 
-      completedAt: new Date().toISOString() 
-    });
-    toast({
-      title: "Service Completed",
-      description: `${appointment.customerName} has been notified of completion.`,
-    });
+  const handleComplete = async (appointment: Appointment) => {
+    try {
+      // Update appointment status
+      await updateAppointmentStatus(appointment.id, 'completed');
+
+      // Update all associated tasks to completed
+      if (appointment.tasks && appointment.tasks.length > 0) {
+        const { error: taskError } = await supabase
+          .from('tasks')
+          .update({ status: 'completed' })
+          .eq('appointment_id', appointment.id);
+
+        if (taskError) throw taskError;
+      }
+
+      toast({
+        title: "Service Completed",
+        description: `${appointment.customerName} has been notified of completion.`,
+      });
+    } catch (err) {
+      console.error('Error completing appointment:', err);
+      toast({
+        title: "Error",
+        description: "Failed to complete appointment",
+        variant: "destructive"
+      });
+    }
   };
 
   const filteredAppointments = appointments.filter(apt => {
@@ -162,13 +349,57 @@ export const AppointmentManagement: React.FC = () => {
     });
   };
 
+  const formatTime = (timeString: string) => {
+    const [hours, minutes] = timeString.split(':');
+    const date = new Date();
+    date.setHours(parseInt(hours), parseInt(minutes));
+    return date.toLocaleTimeString('en-US', {
+      hour: 'numeric',
+      minute: '2-digit',
+      hour12: true
+    });
+  };
+
+  if (loading) {
+    return (
+      <Card className="card-workshop">
+        <CardContent className="flex flex-col items-center justify-center py-12">
+          <Loader2 className="h-8 w-8 animate-spin text-primary mb-4" />
+          <p className="text-muted-foreground">Loading appointments...</p>
+        </CardContent>
+      </Card>
+    );
+  }
+
+  if (error) {
+    return (
+      <Card className="card-workshop">
+        <CardContent className="flex flex-col items-center justify-center py-12">
+          <XCircle className="h-12 w-12 text-destructive mb-4" />
+          <h3 className="text-lg font-semibold mb-2">Error Loading Appointments</h3>
+          <p className="text-muted-foreground text-center mb-4">{error}</p>
+          <Button onClick={fetchAppointments} variant="outline">
+            <RefreshCw className="h-4 w-4 mr-2" />
+            Try Again
+          </Button>
+        </CardContent>
+      </Card>
+    );
+  }
+
   return (
     <div className="space-y-6">
       <Card className="card-workshop">
         <CardHeader>
-          <CardTitle className="flex items-center space-x-2">
-            <Calendar className="h-5 w-5" />
-            <span>Appointment Management</span>
+          <CardTitle className="flex items-center justify-between">
+            <div className="flex items-center space-x-2">
+              <Calendar className="h-5 w-5" />
+              <span>Appointment Management</span>
+            </div>
+            <Button onClick={fetchAppointments} variant="outline" size="sm">
+              <RefreshCw className="h-4 w-4 mr-2" />
+              Refresh
+            </Button>
           </CardTitle>
           
           {/* Filter Tabs */}
@@ -210,7 +441,7 @@ export const AppointmentManagement: React.FC = () => {
                       <div>
                         <h4 className="font-semibold">{appointment.customerName}</h4>
                         <p className="text-sm text-muted-foreground">
-                          {formatDate(appointment.date)} at {appointment.time}
+                          {formatDate(appointment.date)} at {formatTime(appointment.time)}
                         </p>
                       </div>
                     </div>
@@ -256,15 +487,29 @@ export const AppointmentManagement: React.FC = () => {
                     </div>
                   </div>
 
-                  {appointment.tasks && (
+                  {appointment.tasks && appointment.tasks.length > 0 && (
                     <div className="bg-primary/10 border border-primary/20 rounded-md p-3 mb-3">
-                      <p className="text-sm font-medium">Assigned Tasks:</p>
-                      <p className="text-sm text-muted-foreground">{appointment.tasks}</p>
-                      {appointment.estimatedDuration && (
-                        <p className="text-xs text-primary mt-1">
-                          Estimated Duration: {appointment.estimatedDuration}
-                        </p>
-                      )}
+                      <p className="text-sm font-medium mb-2">Assigned Tasks:</p>
+                      {appointment.tasks.map((task, index) => (
+                        <div key={task.id} className="mb-2 last:mb-0">
+                          <p className="text-sm text-muted-foreground">{task.description}</p>
+                          <div className="flex justify-between items-center mt-1">
+                            <p className="text-xs text-primary">
+                              Duration: {task.estimatedDuration}h
+                            </p>
+                            <Badge variant={task.status === 'completed' ? 'default' : 'secondary'} className="text-xs">
+                              {task.status}
+                            </Badge>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {appointment.adminNotes && (
+                    <div className="bg-info/10 border border-info/20 rounded-md p-3 mb-3">
+                      <p className="text-sm font-medium">Admin Notes:</p>
+                      <p className="text-sm text-muted-foreground">{appointment.adminNotes}</p>
                     </div>
                   )}
 
@@ -318,7 +563,9 @@ export const AppointmentManagement: React.FC = () => {
                                     </SelectTrigger>
                                     <SelectContent>
                                       {technicians.map((tech) => (
-                                        <SelectItem key={tech} value={tech}>{tech}</SelectItem>
+                                        <SelectItem key={tech.user_id} value={tech.user_id}>
+                                          {tech.full_name}
+                                        </SelectItem>
                                       ))}
                                     </SelectContent>
                                   </Select>
@@ -334,11 +581,22 @@ export const AppointmentManagement: React.FC = () => {
                                 </div>
 
                                 <div className="space-y-2">
-                                  <Label>Estimated Duration</Label>
+                                  <Label>Estimated Duration (Days)</Label>
                                   <Input
-                                    placeholder="e.g., 2 hours, 1.5 hours, 45 minutes"
+                                    type="number"
+                                    step="0.5"
+                                    placeholder="e.g., 2, 1.5, 3"
                                     value={assignmentData.duration}
                                     onChange={(e) => setAssignmentData(prev => ({...prev, duration: e.target.value}))}
+                                  />
+                                </div>
+
+                                <div className="space-y-2">
+                                  <Label>Admin Notes (Optional)</Label>
+                                  <Textarea
+                                    placeholder="Any additional notes for the technician..."
+                                    value={assignmentData.adminNotes}
+                                    onChange={(e) => setAssignmentData(prev => ({...prev, adminNotes: e.target.value}))}
                                   />
                                 </div>
 
@@ -359,7 +617,7 @@ export const AppointmentManagement: React.FC = () => {
                         </>
                       )}
 
-                      {appointment.status === 'approved' && !appointment.completedAt && (
+                      {appointment.status === 'approved' && (
                         <Button 
                           onClick={() => handleComplete(appointment)}
                           size="sm"
