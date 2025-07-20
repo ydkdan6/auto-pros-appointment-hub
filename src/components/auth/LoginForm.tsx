@@ -26,7 +26,7 @@ export const LoginForm: React.FC<LoginFormProps> = ({ onSwitchToRegister }) => {
       return;
     }
 
-    const success = await login(email, password);
+    const { success, error } = await login(email, password);
     
     if (success) {
       toast({
@@ -36,22 +36,12 @@ export const LoginForm: React.FC<LoginFormProps> = ({ onSwitchToRegister }) => {
     } else {
       toast({
         title: "Login Failed",
-        description: "Invalid credentials or account not approved.",
+        description: error || "Invalid credentials",
         variant: "destructive"
       });
     }
   };
 
-  const handleDemoLogin = (role: 'admin' | 'technician' | 'customer') => {
-    const demoCredentials = {
-      admin: { email: 'admin@autopro.com', password: 'password123' },
-      technician: { email: 'mike@autopro.com', password: 'password123' },
-      customer: { email: 'sarah@example.com', password: 'password123' }
-    };
-    
-    setEmail(demoCredentials[role].email);
-    setPassword(demoCredentials[role].password);
-  };
 
   return (
     <Card className="card-workshop w-full max-w-md">
@@ -103,7 +93,7 @@ export const LoginForm: React.FC<LoginFormProps> = ({ onSwitchToRegister }) => {
         </Button>
 
         <div className="text-center">
-          <p className="text-sm text-muted-foreground mb-3">
+          <p className="text-sm text-muted-foreground">
             Don't have an account?{' '}
             <button 
               onClick={onSwitchToRegister}
@@ -112,36 +102,6 @@ export const LoginForm: React.FC<LoginFormProps> = ({ onSwitchToRegister }) => {
               Sign up
             </button>
           </p>
-          
-          <div className="border-t border-border pt-4">
-            <p className="text-xs text-muted-foreground mb-2">Demo Accounts:</p>
-            <div className="flex flex-col gap-2">
-              <Button 
-                variant="outline" 
-                size="sm" 
-                onClick={() => handleDemoLogin('admin')}
-                className="text-xs"
-              >
-                Admin Demo
-              </Button>
-              <Button 
-                variant="outline" 
-                size="sm" 
-                onClick={() => handleDemoLogin('technician')}
-                className="text-xs"
-              >
-                Technician Demo
-              </Button>
-              <Button 
-                variant="outline" 
-                size="sm" 
-                onClick={() => handleDemoLogin('customer')}
-                className="text-xs"
-              >
-                Customer Demo
-              </Button>
-            </div>
-          </div>
         </div>
       </CardContent>
     </Card>

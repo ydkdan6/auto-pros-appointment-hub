@@ -10,7 +10,7 @@ type TabType = 'overview' | 'book' | 'history';
 
 export const CustomerDashboard: React.FC = () => {
   const [activeTab, setActiveTab] = useState<TabType>('overview');
-  const { user } = useAuth();
+  const { user, profile } = useAuth();
 
   const tabs = [
     { id: 'overview' as TabType, label: 'Overview', icon: Wrench },
@@ -75,7 +75,7 @@ export const CustomerDashboard: React.FC = () => {
 
             <Card className="card-workshop">
               <CardHeader>
-                <CardTitle>Welcome back, {user?.name}!</CardTitle>
+                <CardTitle>Welcome back, {profile?.full_name || user?.email}!</CardTitle>
               </CardHeader>
               <CardContent>
                 <p className="text-muted-foreground mb-4">

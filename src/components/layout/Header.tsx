@@ -4,7 +4,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { LogOut, User, Wrench } from 'lucide-react';
 
 export const Header: React.FC = () => {
-  const { user, logout } = useAuth();
+  const { user, profile, logout } = useAuth();
 
   return (
     <header className="bg-card border-b border-border px-6 py-4">
@@ -23,8 +23,8 @@ export const Header: React.FC = () => {
           <div className="flex items-center space-x-4">
             <div className="flex items-center space-x-2">
               <User className="h-4 w-4 text-muted-foreground" />
-              <span className="font-medium">{user.name}</span>
-              <span className="text-sm text-muted-foreground capitalize">({user.role})</span>
+              <span className="font-medium">{profile?.full_name || user.email}</span>
+              <span className="text-sm text-muted-foreground capitalize">({profile?.role || 'user'})</span>
             </div>
             
             <Button 

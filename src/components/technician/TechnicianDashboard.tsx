@@ -34,7 +34,7 @@ interface Assignment {
 }
 
 export const TechnicianDashboard: React.FC = () => {
-  const { user } = useAuth();
+  const { user, profile } = useAuth();
   const [assignments, setAssignments] = useState<Assignment[]>([]);
   const [filter, setFilter] = useState<string>('all');
 
@@ -42,12 +42,12 @@ export const TechnicianDashboard: React.FC = () => {
     // Load assignments from localStorage (in real app, this would be an API call)
     const storedAppointments = JSON.parse(localStorage.getItem('appointments') || '[]');
     const techAssignments = storedAppointments.filter((apt: Assignment) => 
-      apt.assignedTechnician === user?.name
+      apt.assignedTechnician === profile?.full_name
     );
     setAssignments(techAssignments.sort((a: Assignment, b: Assignment) => 
       new Date(a.date).getTime() - new Date(b.date).getTime()
     ));
-  }, [user?.name]);
+  }, [profile?.full_name]);
 
   const updateAssignmentStatus = (assignmentId: string, status: string, data?: any) => {
     const updatedAssignments = assignments.map(assignment => {
@@ -158,7 +158,7 @@ export const TechnicianDashboard: React.FC = () => {
               <Wrench className="h-6 w-6 text-primary-foreground" />
             </div>
             <div>
-              <h2 className="text-2xl font-bold">Welcome, {user?.name}!</h2>
+              <h2 className="text-2xl font-bold">Welcome, {profile?.full_name || user?.email}!</h2>
               <p className="text-muted-foreground">Here are your assigned jobs and tasks</p>
             </div>
           </div>

@@ -6,6 +6,7 @@ import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useAuth } from '@/contexts/AuthContext';
+import { supabase } from '@/integrations/supabase/client';
 import { toast } from '@/hooks/use-toast';
 import { Calendar, Car, FileText, Clock } from 'lucide-react';
 
@@ -14,7 +15,7 @@ interface AppointmentBookingProps {
 }
 
 export const AppointmentBooking: React.FC<AppointmentBookingProps> = ({ onSuccess }) => {
-  const { user } = useAuth();
+  const { user, profile } = useAuth();
   const [formData, setFormData] = useState({
     date: '',
     time: '',
@@ -80,49 +81,57 @@ export const AppointmentBooking: React.FC<AppointmentBookingProps> = ({ onSucces
   };
 
   const handleSubmit = async () => {
-    if (!validateForm()) return;
+    if (!validateForm() || !user) return;
 
-    // Simulate API call
-    await new Promise(resolve => setTimeout(resolve, 1000));
+    try {
+      const { error } = await supabase
+        .from('appointments')
+        .insert({
+          customer_id: user.id,
+          vehicle_make: formData.vehicleMake,
+          vehicle_model: formData.vehicleModel,
+          vehicle_year: parseInt(formData.vehicleYear),
+          fault_description: formData.fault,
+          reason_description: formData.reason,
+          appointment_date: formData.date,
+          appointment_time: formData.time,
+          status: 'pending'
+        });
 
-    // Store appointment data (in real app, this would be sent to backend)
-    const appointment = {
-      id: Date.now().toString(),
-      customerId: user?.id,
-      customerName: user?.name,
-      date: formData.date,
-      time: formData.time,
-      vehicle: `${formData.vehicleYear} ${formData.vehicleMake} ${formData.vehicleModel}`,
-      fault: formData.fault,
-      reason: formData.reason,
-      preferredTechnician: formData.preferredTechnician,
-      status: 'pending',
-      createdAt: new Date().toISOString()
-    };
+      if (error) {
+        toast({
+          title: "Error",
+          description: "Failed to book appointment. Please try again.",
+          variant: "destructive"
+        });
+        return;
+      }
 
-    // Store in localStorage for demo purposes
-    const existingAppointments = JSON.parse(localStorage.getItem('appointments') || '[]');
-    existingAppointments.push(appointment);
-    localStorage.setItem('appointments', JSON.stringify(existingAppointments));
+      toast({
+        title: "Appointment Booked!",
+        description: "Your appointment has been submitted and is pending approval.",
+      });
 
-    toast({
-      title: "Appointment Booked!",
-      description: "Your appointment has been submitted and is pending approval.",
-    });
+      // Reset form
+      setFormData({
+        date: '',
+        time: '',
+        vehicleMake: '',
+        vehicleModel: '',
+        vehicleYear: '',
+        fault: '',
+        reason: '',
+        preferredTechnician: ''
+      });
 
-    // Reset form
-    setFormData({
-      date: '',
-      time: '',
-      vehicleMake: '',
-      vehicleModel: '',
-      vehicleYear: '',
-      fault: '',
-      reason: '',
-      preferredTechnician: ''
-    });
-
-    onSuccess();
+      onSuccess();
+    } catch (error) {
+      toast({
+        title: "Error",
+        description: "An unexpected error occurred. Please try again.",
+        variant: "destructive"
+      });
+    }
   };
 
   // Get minimum date (today)

@@ -9,7 +9,7 @@ import { TechnicianDashboard } from '@/components/technician/TechnicianDashboard
 import { Loader2 } from 'lucide-react';
 
 const Index = () => {
-  const { user, isLoading } = useAuth();
+  const { user, profile, isLoading } = useAuth();
   const [showRegister, setShowRegister] = useState(false);
 
   if (isLoading) {
@@ -24,9 +24,26 @@ const Index = () => {
   }
 
   const renderDashboard = () => {
-    if (!user) return null;
+    if (!user || !profile) return null;
 
-    switch (user.role) {
+    // Check if technician is approved
+    if (profile.role === 'technician' && !profile.is_approved) {
+      return (
+        <div className="min-h-[50vh] flex items-center justify-center">
+          <div className="text-center space-y-4">
+            <div className="bg-accent/10 border border-accent/20 rounded-lg p-6 max-w-md">
+              <h2 className="text-xl font-semibold mb-2">Account Pending Approval</h2>
+              <p className="text-muted-foreground">
+                Your technician account is currently pending admin approval. 
+                You'll be able to access your dashboard once approved.
+              </p>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    switch (profile.role) {
       case 'customer':
         return <CustomerDashboard />;
       case 'admin':

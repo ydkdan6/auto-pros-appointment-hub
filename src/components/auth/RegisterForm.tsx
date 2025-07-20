@@ -74,7 +74,7 @@ export const RegisterForm: React.FC<RegisterFormProps> = ({ onSwitchToLogin }) =
   const handleSubmit = async () => {
     if (!validateForm()) return;
 
-    const success = await register({
+    const { success, error } = await register({
       name: formData.name,
       email: formData.email,
       password: formData.password,
@@ -91,14 +91,14 @@ export const RegisterForm: React.FC<RegisterFormProps> = ({ onSwitchToLogin }) =
       } else {
         toast({
           title: "Application Submitted!",
-          description: "Your technician application is pending admin approval.",
+          description: error || "Your technician application is pending admin approval.",
         });
         onSwitchToLogin();
       }
     } else {
       toast({
         title: "Registration Failed",
-        description: "Email already exists or registration error.",
+        description: error || "Registration error occurred",
         variant: "destructive"
       });
     }

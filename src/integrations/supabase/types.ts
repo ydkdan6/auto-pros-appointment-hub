@@ -14,16 +14,181 @@ export type Database = {
   }
   public: {
     Tables: {
-      [_ in never]: never
+      appointments: {
+        Row: {
+          admin_notes: string | null
+          appointment_date: string
+          appointment_time: string
+          created_at: string
+          customer_id: string
+          estimated_duration_hours: number | null
+          fault_description: string
+          id: string
+          reason_description: string
+          rejection_reason: string | null
+          status: Database["public"]["Enums"]["appointment_status"]
+          technician_id: string | null
+          updated_at: string
+          vehicle_make: string
+          vehicle_model: string
+          vehicle_year: number
+        }
+        Insert: {
+          admin_notes?: string | null
+          appointment_date: string
+          appointment_time: string
+          created_at?: string
+          customer_id: string
+          estimated_duration_hours?: number | null
+          fault_description: string
+          id?: string
+          reason_description: string
+          rejection_reason?: string | null
+          status?: Database["public"]["Enums"]["appointment_status"]
+          technician_id?: string | null
+          updated_at?: string
+          vehicle_make: string
+          vehicle_model: string
+          vehicle_year: number
+        }
+        Update: {
+          admin_notes?: string | null
+          appointment_date?: string
+          appointment_time?: string
+          created_at?: string
+          customer_id?: string
+          estimated_duration_hours?: number | null
+          fault_description?: string
+          id?: string
+          reason_description?: string
+          rejection_reason?: string | null
+          status?: Database["public"]["Enums"]["appointment_status"]
+          technician_id?: string | null
+          updated_at?: string
+          vehicle_make?: string
+          vehicle_model?: string
+          vehicle_year?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "appointments_customer_id_fkey"
+            columns: ["customer_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["user_id"]
+          },
+          {
+            foreignKeyName: "appointments_technician_id_fkey"
+            columns: ["technician_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["user_id"]
+          },
+        ]
+      }
+      profiles: {
+        Row: {
+          created_at: string
+          full_name: string
+          id: string
+          is_approved: boolean
+          phone: string | null
+          role: Database["public"]["Enums"]["user_role"]
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          full_name: string
+          id?: string
+          is_approved?: boolean
+          phone?: string | null
+          role?: Database["public"]["Enums"]["user_role"]
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          full_name?: string
+          id?: string
+          is_approved?: boolean
+          phone?: string | null
+          role?: Database["public"]["Enums"]["user_role"]
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
+      tasks: {
+        Row: {
+          appointment_id: string
+          created_at: string
+          estimated_duration_hours: number
+          id: string
+          status: string
+          task_description: string
+          technician_id: string
+          updated_at: string
+        }
+        Insert: {
+          appointment_id: string
+          created_at?: string
+          estimated_duration_hours: number
+          id?: string
+          status?: string
+          task_description: string
+          technician_id: string
+          updated_at?: string
+        }
+        Update: {
+          appointment_id?: string
+          created_at?: string
+          estimated_duration_hours?: number
+          id?: string
+          status?: string
+          task_description?: string
+          technician_id?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "tasks_appointment_id_fkey"
+            columns: ["appointment_id"]
+            isOneToOne: false
+            referencedRelation: "appointments"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "tasks_technician_id_fkey"
+            columns: ["technician_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["user_id"]
+          },
+        ]
+      }
     }
     Views: {
       [_ in never]: never
     }
     Functions: {
-      [_ in never]: never
+      get_user_role: {
+        Args: { user_uuid: string }
+        Returns: Database["public"]["Enums"]["user_role"]
+      }
+      is_user_approved: {
+        Args: { user_uuid: string }
+        Returns: boolean
+      }
     }
     Enums: {
-      [_ in never]: never
+      appointment_status:
+        | "pending"
+        | "approved"
+        | "rejected"
+        | "in_progress"
+        | "completed"
+      user_role: "customer" | "admin" | "technician"
     }
     CompositeTypes: {
       [_ in never]: never
@@ -150,6 +315,15 @@ export type CompositeTypes<
 
 export const Constants = {
   public: {
-    Enums: {},
+    Enums: {
+      appointment_status: [
+        "pending",
+        "approved",
+        "rejected",
+        "in_progress",
+        "completed",
+      ],
+      user_role: ["customer", "admin", "technician"],
+    },
   },
 } as const
