@@ -177,6 +177,37 @@ export const AppointmentBooking: React.FC<AppointmentBookingProps> = ({ onSucces
     return `${displayHour}:${newMinutes.toString().padStart(2, '0')} ${period}`;
   };
 
+  const findAvailableTimeSlot = async (date: string, originalTime: string): Promise<{ time: string; isOriginal: boolean }> => {
+    let currentTime = originalTime;
+    let attempts = 0;
+    const maxAttempts = 10; // Prevent infinite loop, max 5 hours of delays
+
+    while (attempts < maxAttempts) {
+      const isAvailable = await checkTimeSlotAvailability(date, currentTime);
+      
+      if (isAvailable) {
+        return {
+          time: currentTime,
+          isOriginal: attempts === 0
+        };
+      }
+      
+      // Time slot is taken, try 30 minutes later
+      currentTime = calculateDelayedTime(currentTime);
+      attempts++;
+      
+      // Check if we've gone beyond business hours (after 5:00 PM)
+      const dbTime = convertTimeToDBFormat(currentTime);
+      const [hours] = dbTime.split(':').map(Number);
+      
+      if (hours >= 17) { // 5:00 PM or later
+        throw new Error('No available time slots for this date. Please try a different date.');
+      }
+    }
+    
+    throw new Error('Unable to find an available time slot. Please try a different date.');
+  };
+
   const handleSubmit = async () => {
     if (!validateForm() || !user || isSubmitting) return;
 
