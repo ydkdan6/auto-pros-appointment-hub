@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -8,7 +8,13 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { useAuth } from '@/contexts/AuthContext';
 import { supabase } from '@/integrations/supabase/client';
 import { toast } from '@/hooks/use-toast';
-import { Calendar, Car, FileText, Clock } from 'lucide-react';
+import { Calendar, Car, FileText, Clock, AlertCircle } from 'lucide-react';
+import { Alert, AlertDescription } from '@/components/ui/alert';
+
+interface Technician {
+  user_id: string;
+  full_name: string;
+}
 
 interface AppointmentBookingProps {
   onSuccess: () => void;
@@ -16,6 +22,9 @@ interface AppointmentBookingProps {
 
 export const AppointmentBooking: React.FC<AppointmentBookingProps> = ({ onSuccess }) => {
   const { user, profile } = useAuth();
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [technicians, setTechnicians] = useState<Technician[]>([]);
+  const [isLoadingTechnicians, setIsLoadingTechnicians] = useState(true);
   const [formData, setFormData] = useState({
     date: '',
     time: '',
@@ -32,8 +41,36 @@ export const AppointmentBooking: React.FC<AppointmentBookingProps> = ({ onSucces
     '1:00 PM', '2:00 PM', '3:00 PM', '4:00 PM', '5:00 PM'
   ];
 
-  const technicians = [
-  ];
+  // Fetch technicians on component mount
+  useEffect(() => {
+    const fetchTechnicians = async () => {
+      try {
+        const { data, error } = await supabase
+          .from('profiles')
+          .select('user_id, full_name')
+          .eq('role', 'technician')
+          .eq('is_approved', true)
+          .order('full_name', { ascending: true });
+
+        if (error) {
+          console.error('Error fetching technicians:', error);
+          toast({
+            title: "Warning",
+            description: "Could not load technicians list",
+            variant: "destructive"
+          });
+        } else {
+          setTechnicians(data || []);
+        }
+      } catch (error) {
+        console.error('Unexpected error fetching technicians:', error);
+      } finally {
+        setIsLoadingTechnicians(false);
+      }
+    };
+
+    fetchTechnicians();
+  }, []);
 
   const handleInputChange = (field: string, value: string) => {
     setFormData(prev => ({
@@ -72,13 +109,101 @@ export const AppointmentBooking: React.FC<AppointmentBookingProps> = ({ onSucces
       return false;
     }
 
+    // Validate year is a number and reasonable
+    const year = parseInt(formData.vehicleYear);
+    if (isNaN(year) || year < 1900 || year > new Date().getFullYear() + 2) {
+      toast({
+        title: "Error",
+        description: "Please enter a valid vehicle year",
+        variant: "destructive"
+      });
+      return false;
+    }
+
     return true;
   };
 
-  const handleSubmit = async () => {
-    if (!validateForm() || !user) return;
+  const convertTimeToDBFormat = (timeString: string): string => {
+    // Convert "8:00 AM" format to "08:00:00" format
+    const [time, period] = timeString.split(' ');
+    const [hours, minutes] = time.split(':');
+    let hour24 = parseInt(hours);
+    
+    if (period === 'PM' && hour24 !== 12) {
+      hour24 += 12;
+    } else if (period === 'AM' && hour24 === 12) {
+      hour24 = 0;
+    }
+    
+    return `${hour24.toString().padStart(2, '0')}:${minutes}:00`;
+  };
 
+  const checkTimeSlotAvailability = async (date: string, time: string): Promise<boolean> => {
+    const dbTime = convertTimeToDBFormat(time);
+    
+    const { data: existingAppointments, error } = await supabase
+      .from('appointments')
+      .select('id')
+      .eq('appointment_date', date)
+      .eq('appointment_time', dbTime)
+      .in('status', ['approved', 'pending']);
+
+    if (error) {
+      console.error('Error checking availability:', error);
+      throw error;
+    }
+
+    return existingAppointments.length === 0;
+  };
+
+  const calculateDelayedTime = (originalTime: string): string => {
+    const dbTime = convertTimeToDBFormat(originalTime);
+    const [hours, minutes] = dbTime.split(':').map(Number);
+    
+    // Add 30 minutes
+    let newMinutes = minutes + 30;
+    let newHours = hours;
+    
+    if (newMinutes >= 60) {
+      newMinutes -= 60;
+      newHours += 1;
+    }
+    
+    // Convert back to display format
+    const period = newHours >= 12 ? 'PM' : 'AM';
+    let displayHour = newHours > 12 ? newHours - 12 : newHours;
+    if (displayHour === 0) displayHour = 12;
+    
+    return `${displayHour}:${newMinutes.toString().padStart(2, '0')} ${period}`;
+  };
+
+  const handleSubmit = async () => {
+    if (!validateForm() || !user || isSubmitting) return;
+
+    setIsSubmitting(true);
+    
     try {
+      // Check if the preferred time slot is available
+      const isAvailable = await checkTimeSlotAvailability(formData.date, formData.time);
+      
+      let finalTime = formData.time;
+      let finalStatus = 'approved';
+      let adminNotes = '';
+
+      if (!isAvailable) {
+        // Time slot is taken, calculate delayed time (30 minutes later)
+        finalTime = calculateDelayedTime(formData.time);
+        adminNotes = `Original requested time: ${formData.time}. Automatically rescheduled due to time conflict.`;
+        
+        toast({
+          title: "Time Slot Conflict",
+          description: `Your preferred time ${formData.time} was unavailable. Your appointment has been automatically rescheduled to ${finalTime}.`,
+          variant: "default"
+        });
+      }
+
+      const dbTime = convertTimeToDBFormat(finalTime);
+      
       const { error } = await supabase
         .from('appointments')
         .insert({
@@ -89,11 +214,13 @@ export const AppointmentBooking: React.FC<AppointmentBookingProps> = ({ onSucces
           fault_description: formData.fault,
           reason_description: formData.reason,
           appointment_date: formData.date,
-          appointment_time: formData.time,
-          status: 'pending'
+          appointment_time: dbTime,
+          status: finalStatus,
+          admin_notes: adminNotes || null
         });
 
       if (error) {
+        console.error('Database error:', error);
         toast({
           title: "Error",
           description: "Failed to book appointment. Please try again.",
@@ -102,10 +229,17 @@ export const AppointmentBooking: React.FC<AppointmentBookingProps> = ({ onSucces
         return;
       }
 
-      toast({
-        title: "Appointment Booked!",
-        description: "Your appointment has been submitted and is pending approval.",
-      });
+      if (isAvailable) {
+        toast({
+          title: "Appointment Confirmed!",
+          description: `Your appointment has been automatically approved for ${formData.date} at ${finalTime}.`,
+        });
+      } else {
+        toast({
+          title: "Appointment Rescheduled & Confirmed!",
+          description: `Your appointment has been confirmed for ${formData.date} at ${finalTime}.`,
+        });
+      }
 
       // Reset form
       setFormData({
@@ -121,11 +255,14 @@ export const AppointmentBooking: React.FC<AppointmentBookingProps> = ({ onSucces
 
       onSuccess();
     } catch (error) {
+      console.error('Unexpected error:', error);
       toast({
         title: "Error",
         description: "An unexpected error occurred. Please try again.",
         variant: "destructive"
       });
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
@@ -141,6 +278,15 @@ export const AppointmentBooking: React.FC<AppointmentBookingProps> = ({ onSucces
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-6">
+        {/* Information Alert */}
+        <Alert>
+          <AlertCircle className="h-4 w-4" />
+          <AlertDescription>
+            <strong>Auto-Approval System:</strong> Your appointment will be automatically approved if the time slot is available. 
+            If your preferred time is taken, we'll automatically reschedule you to 30 minutes later and confirm immediately.
+          </AlertDescription>
+        </Alert>
+
         {/* Date and Time Selection */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div className="space-y-2">
@@ -152,12 +298,13 @@ export const AppointmentBooking: React.FC<AppointmentBookingProps> = ({ onSucces
               value={formData.date}
               onChange={(e) => handleInputChange('date', e.target.value)}
               className="bg-input border-border"
+              disabled={isSubmitting}
             />
           </div>
           
           <div className="space-y-2">
             <Label htmlFor="time">Preferred Time *</Label>
-            <Select value={formData.time} onValueChange={(value) => handleInputChange('time', value)}>
+            <Select value={formData.time} onValueChange={(value) => handleInputChange('time', value)} disabled={isSubmitting}>
               <SelectTrigger className="bg-input border-border">
                 <SelectValue placeholder="Select time slot" />
               </SelectTrigger>
@@ -186,6 +333,7 @@ export const AppointmentBooking: React.FC<AppointmentBookingProps> = ({ onSucces
                 value={formData.vehicleMake}
                 onChange={(e) => handleInputChange('vehicleMake', e.target.value)}
                 className="bg-input border-border"
+                disabled={isSubmitting}
               />
             </div>
             
@@ -197,6 +345,7 @@ export const AppointmentBooking: React.FC<AppointmentBookingProps> = ({ onSucces
                 value={formData.vehicleModel}
                 onChange={(e) => handleInputChange('vehicleModel', e.target.value)}
                 className="bg-input border-border"
+                disabled={isSubmitting}
               />
             </div>
             
@@ -205,9 +354,13 @@ export const AppointmentBooking: React.FC<AppointmentBookingProps> = ({ onSucces
               <Input
                 id="vehicleYear"
                 placeholder="e.g., 2020"
+                type="number"
+                min="1900"
+                max={new Date().getFullYear() + 2}
                 value={formData.vehicleYear}
                 onChange={(e) => handleInputChange('vehicleYear', e.target.value)}
                 className="bg-input border-border"
+                disabled={isSubmitting}
               />
             </div>
           </div>
@@ -230,6 +383,7 @@ export const AppointmentBooking: React.FC<AppointmentBookingProps> = ({ onSucces
                 onChange={(e) => handleInputChange('fault', e.target.value)}
                 maxLength={200}
                 className="bg-input border-border"
+                disabled={isSubmitting}
               />
               <p className="text-xs text-muted-foreground">
                 {formData.fault.length}/200 characters
@@ -246,6 +400,7 @@ export const AppointmentBooking: React.FC<AppointmentBookingProps> = ({ onSucces
                 maxLength={500}
                 rows={4}
                 className="bg-input border-border"
+                disabled={isSubmitting}
               />
               <p className="text-xs text-muted-foreground">
                 {formData.reason.length}/500 characters
@@ -257,31 +412,53 @@ export const AppointmentBooking: React.FC<AppointmentBookingProps> = ({ onSucces
         {/* Technician Preference */}
         <div className="space-y-2">
           <Label htmlFor="technician">Preferred Technician (Optional)</Label>
-          <Select value={formData.preferredTechnician} onValueChange={(value) => handleInputChange('preferredTechnician', value)}>
-            <SelectTrigger className="bg-input border-border">
-              <SelectValue placeholder="Choose a technician" />
-            </SelectTrigger>
-            <SelectContent>
-              {technicians.map((tech) => (
-                <SelectItem key={tech} value={tech}>{tech}</SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+          {isLoadingTechnicians ? (
+            <div className="bg-input border-border rounded-md px-3 py-2 text-sm text-muted-foreground">
+              Loading technicians...
+            </div>
+          ) : technicians.length === 0 ? (
+            <div className="bg-input border-border rounded-md px-3 py-2 text-sm text-muted-foreground">
+              No technicians available
+            </div>
+          ) : (
+            <Select 
+              value={formData.preferredTechnician} 
+              onValueChange={(value) => handleInputChange('preferredTechnician', value)} 
+              disabled={isSubmitting}
+            >
+              <SelectTrigger className="bg-input border-border">
+                <SelectValue placeholder="Choose a technician" />
+              </SelectTrigger>
+              <SelectContent>
+                {technicians.map((tech) => (
+                  <SelectItem key={tech.user_id} value={tech.user_id}>
+                    {tech.full_name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          )}
+          {technicians.length === 0 && !isLoadingTechnicians && (
+            <p className="text-xs text-muted-foreground">
+              No approved technicians found. You can still book an appointment and a technician will be assigned later.
+            </p>
+          )}
         </div>
 
         {/* Submit Button */}
         <Button 
           onClick={handleSubmit}
           className="btn-workshop-primary w-full"
+          disabled={isSubmitting}
         >
           <Clock className="mr-2 h-4 w-4" />
-          Submit Appointment Request
+          {isSubmitting ? 'Processing...' : 'Submit Appointment Request'}
         </Button>
 
         <div className="bg-muted/50 rounded-lg p-4">
           <p className="text-sm text-muted-foreground">
-            <strong>Note:</strong> Your appointment request will be reviewed by our team. 
-            You'll receive a confirmation email once approved, or we'll contact you if we need to reschedule.
+            <strong>How it works:</strong> Our smart scheduling system will instantly approve your appointment if the time slot is available. 
+            If there's a conflict, we'll automatically reschedule you 30 minutes later and confirm immediately - no waiting for manual approval!
           </p>
         </div>
       </CardContent>
